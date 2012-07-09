@@ -1,0 +1,7 @@
+This is a simple project to support batch conversion of audio file formats.  Ideally, it'll drive through errors and tell you at the end which things failed instead of dieing half way through.
+
+Right now, it's messy and only supports flac.
+
+The input system is also horrible.  generate files that have lists of flac files and pass them as args to convert.py. Example
+
+find music -name *.flac > files-to-convert
