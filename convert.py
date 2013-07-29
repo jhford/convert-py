@@ -13,86 +13,93 @@ import mp
 
 class EncodingFailure(Exception): pass
 
-def flac_to_mp3(infile, settings=["-V0"], lame_bin='lame',
-                metaflac_bin='metaflac', flac_bin='flac', eyeD3_bin='eyeD3'):
-    log = logging.getLogger(__name__)
-    important_tags = ('title', 'artist', 'album', 'tracknumber', 'discnumber')
-    # Figure out the metadata.
-    data = {}
-    log.info('BEGIN METADATA "%s"', os.path.basename(infile))
-    for i in important_tags:
-        output = unicode(sp.check_output([metaflac_bin, '--no-utf8-convert', '--show-tag=%s' % i,
-                                          infile]), encoding='utf-8')
-        if '=' in output:
-            data[i] = output[output.index('=')+1:].strip()
-        else:
-            data[i] = output.strip()
+class FlacToMP3Job(mp.Job):
+    flac_bin = 'flac'
+    metaflac_bin = 'metaflac'
+    lame_bin = 'lame'
+    eyeD3_bin = 'eyeD3'
 
-    # This exception handler is ugly but I don't know a good
-    # way to check if a flac file has a picture without lots
-    # of code.  Laziness abounds
-    try:
-        raise Exception() # TEMPORARY
-        # Assuming jpg file is really lame
-        tmppicfd, tmppicfile = tempfile.mkstemp(prefix='flacpic_', suffix='.jpg')
-        os.close(tmppicfd)
-        os.unlink(tmppicfile)
-        sp.check_output([metaflac_bin,
-                       '--export-picture-to=%s'%tmppicfile,
-                       infile])
-        picture = tmppicfile
-    except sp.CalledProcessError:
-        log.debug('could not extract picture from infile')
-        picture = None
-    except Exception:
-        picture=None # XXX THIS IS TEMPORARY!!!
-    log.info('END METADATA "%s"', os.path.basename(infile))
+    def __init__(self, infile, settings=['-V2']):
+        mp.Job.__init__(self)
+        self.infile = infile
+        self.settings = settings
+        self.log = logging.getLogger('convert')
 
-    # Decode flac file to temporary wav file
-    tmpfd, tmpfile = tempfile.mkstemp(prefix='flacinput_', suffix='.wav')
-    os.close(tmpfd)
-    os.unlink(tmpfile)
-    log.info('BEGIN DECODE "%s"', os.path.basename(infile))
-    sp.check_call([flac_bin, '--silent', '--decode', infile, '--output-name=%s'%tmpfile])
-    log.info('END DECODE "%s"', os.path.basename(infile))
+    def run(self):
+        important_tags = ('title', 'artist', 'album', 'tracknumber', 'discnumber')
+        # Figure out the metadata.
+        data = {}
+        self.log.info('BEGIN METADATA "%s"', os.path.basename(self.infile))
+        for i in important_tags:
+            output = unicode(sp.check_output([self.metaflac_bin, '--no-utf8-convert', '--show-tag=%s' % i,
+                                              self.infile]), encoding='utf-8')
+            if '=' in output:
+                data[i] = output[output.index('=')+1:].strip()
+            else:
+                data[i] = output.strip()
 
-    # Encode wav into mp3
-    output_file = os.path.join(u'out', data['artist'], data['album'],
-                u'%s %s.mp3' % (data['tracknumber'], data['title']))
-    try:
-        os.makedirs(os.path.dirname(output_file))
-    except OSError:
-        pass # TODO: do something smarter here
-    log.info('BEGIN ENCODE "%s"', os.path.basename(infile))
-    sp.check_call([lame_bin, '--quiet'] + settings + [tmpfile, output_file])
-    log.info('END ENCODE "%s"', os.path.basename(infile))
+        # This exception handler is ugly but I don't know a good
+        # way to check if a flac file has a picture without lots
+        # of code.  Laziness abounds
+        try:
+            # Assuming jpg file is really lame
+            tmppicfd, tmppicfile = tempfile.mkstemp(prefix='flacpic_', suffix='.jpg')
+            os.close(tmppicfd)
+            os.unlink(tmppicfile)
+            output = sp.check_output([self.metaflac_bin,
+                           '--export-picture-to=%s'%tmppicfile,
+                           self.infile])
+            picture = tmppicfile
+        except sp.CalledProcessError:
+            self.log.debug('could not extract picture from %s', self.infile)
+            picture = None
+        self.log.info('END METADATA "%s"', os.path.basename(self.infile))
 
-    # Set ID3 tags
-    log.info('BEGIN ID3 "%s"', os.path.basename(infile))
-    devnull = os.open(os.devnull, os.O_WRONLY)
-    sp.check_call([eyeD3_bin, u'--to-v2.4',
-                   u'--artist=%s' % data['artist'],
-                   u'--album=%s' % data['album'],
-                   u'--title=%s' % data['title'],
-                   u'--track=%s' % data['tracknumber'],
-                   u'--set-encoding=utf8',
-                   output_file],
-                   stdout=devnull,
-                   stderr=sp.STDOUT)
-    if picture:
-        sp.check_call([eyeD3_bin, u'--add-image=%s:FRONT_COVER' % picture,
+        # Decode flac file to temporary wav file
+        tmpfd, tmpfile = tempfile.mkstemp(prefix='flacinput_', suffix='.wav')
+        os.close(tmpfd)
+        os.unlink(tmpfile)
+        self.log.info('BEGIN DECODE "%s"', os.path.basename(self.infile))
+        sp.check_call([self.flac_bin, '--silent', '--decode', self.infile, '--output-name=%s'%tmpfile])
+        self.log.info('END DECODE "%s"', os.path.basename(self.infile))
+
+        # Encode wav into mp3
+        output_file = os.path.join(u'output', data['artist'], data['album'],
+                    u'%s %s.mp3' % (data['tracknumber'], data['title']))
+        try:
+            os.makedirs(os.path.dirname(output_file))
+        except OSError:
+            pass # TODO: do something smarter here
+        self.log.info('BEGIN ENCODE "%s"', os.path.basename(self.infile))
+        sp.check_call([self.lame_bin, '--quiet'] + self.settings + [tmpfile, output_file])
+        self.log.info('END ENCODE "%s"', os.path.basename(self.infile))
+
+        # Set ID3 tags
+        self.log.info('BEGIN ID3 "%s"', os.path.basename(self.infile))
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        sp.check_call([self.eyeD3_bin, u'--to-v2.4',
+                       u'--artist=%s' % data['artist'],
+                       u'--album=%s' % data['album'],
+                       u'--title=%s' % data['title'],
+                       u'--track=%s' % data['tracknumber'],
+                       u'--set-encoding=utf8',
                        output_file],
                        stdout=devnull,
                        stderr=sp.STDOUT)
-    os.close(devnull)
-    log.info('END ID3 "%s"', os.path.basename(infile))
-    os.unlink(tmpfile)
-    if picture:
-        os.unlink(tmppicfile)
-    return 0
+        if picture:
+            sp.check_call([self.eyeD3_bin, u'--add-image=%s:FRONT_COVER' % picture,
+                           output_file],
+                           stdout=devnull,
+                           stderr=sp.STDOUT)
+        os.close(devnull)
+        self.log.info('END ID3 "%s"', os.path.basename(self.infile))
+        os.unlink(tmpfile)
+        if picture:
+            os.unlink(tmppicfile)
+
 
 def main():
-    log = util.setup_logging(__name__, volume=0)
+    log = util.setup_logging('convert', volume=11)
     log.info("Converting some files for you")
 
     flacs=[]
@@ -101,7 +108,7 @@ def main():
             flacs.extend([x.strip() for x in f.readlines()])
     jobs = []
     for flac in flacs:
-        jobs.append(mp.PyFuncJob(flac_to_mp3, flac))
+        jobs.append(FlacToMP3Job(flac))
     mp.ThreadPool(jobs).run_jobs()
 
 
